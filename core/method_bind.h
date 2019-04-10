@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -31,10 +31,11 @@
 #ifndef METHOD_BIND_H
 #define METHOD_BIND_H
 
-#include "list.h"
-#include "method_ptrcall.h"
-#include "object.h"
-#include "variant.h"
+#include "core/list.h"
+#include "core/method_ptrcall.h"
+#include "core/object.h"
+#include "core/variant.h"
+
 #include <stdio.h>
 
 /**
@@ -45,7 +46,7 @@
 #define DEBUG_METHODS_ENABLED
 #endif
 
-#include "type_info.h"
+#include "core/type_info.h"
 
 enum MethodFlags {
 
@@ -354,7 +355,7 @@ public:
 			for (int i = 0; i < p_info.arguments.size(); i++) {
 
 				at[i + 1] = p_info.arguments[i].type;
-				names[i] = p_info.arguments[i].name;
+				names.write[i] = p_info.arguments[i].name;
 			}
 
 			set_argument_names(names);

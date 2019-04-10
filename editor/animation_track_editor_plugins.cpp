@@ -1,4 +1,35 @@
+/*************************************************************************/
+/*  animation_track_editor_plugins.cpp                                   */
+/*************************************************************************/
+/*                       This file is part of:                           */
+/*                           GODOT ENGINE                                */
+/*                      https://godotengine.org                          */
+/*************************************************************************/
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
+/*                                                                       */
+/* Permission is hereby granted, free of charge, to any person obtaining */
+/* a copy of this software and associated documentation files (the       */
+/* "Software"), to deal in the Software without restriction, including   */
+/* without limitation the rights to use, copy, modify, merge, publish,   */
+/* distribute, sublicense, and/or sell copies of the Software, and to    */
+/* permit persons to whom the Software is furnished to do so, subject to */
+/* the following conditions:                                             */
+/*                                                                       */
+/* The above copyright notice and this permission notice shall be        */
+/* included in all copies or substantial portions of the Software.       */
+/*                                                                       */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
+/*************************************************************************/
+
 #include "animation_track_editor_plugins.h"
+
 #include "editor/audio_stream_preview.h"
 #include "editor_resource_preview.h"
 #include "editor_scale.h"
@@ -7,6 +38,7 @@
 #include "scene/3d/sprite_3d.h"
 #include "scene/animation/animation_player.h"
 #include "servers/audio/audio_stream.h"
+
 /// BOOL ///
 int AnimationTrackEditBool::get_key_height() const {
 
@@ -217,9 +249,6 @@ void AnimationTrackEditAudio::draw_key(int p_index, float p_pixels_sec, int p_x,
 		return;
 	}
 
-	Ref<Font> font = get_font("font", "Label");
-	float fh = int(font->get_height() * 1.5);
-
 	bool play = get_animation()->track_get_key_value(get_track(), p_index);
 	if (play) {
 		float len = stream->get_length();
@@ -255,8 +284,9 @@ void AnimationTrackEditAudio::draw_key(int p_index, float p_pixels_sec, int p_x,
 		if (to_x <= from_x)
 			return;
 
-		int h = get_size().height;
-		Rect2 rect = Rect2(from_x, (h - fh) / 2, to_x - from_x, fh);
+		Ref<Font> font = get_font("font", "Label");
+		float fh = int(font->get_height() * 1.5);
+		Rect2 rect = Rect2(from_x, (get_size().height - fh) / 2, to_x - from_x, fh);
 		draw_rect(rect, Color(0.25, 0.25, 0.25));
 
 		Vector<Vector2> lines;
@@ -271,8 +301,8 @@ void AnimationTrackEditAudio::draw_key(int p_index, float p_pixels_sec, int p_x,
 			float min = preview->get_min(ofs, ofs_n) * 0.5 + 0.5;
 
 			int idx = i - from_x;
-			lines[idx * 2 + 0] = Vector2(i, rect.position.y + min * rect.size.y);
-			lines[idx * 2 + 1] = Vector2(i, rect.position.y + max * rect.size.y);
+			lines.write[idx * 2 + 0] = Vector2(i, rect.position.y + min * rect.size.y);
+			lines.write[idx * 2 + 1] = Vector2(i, rect.position.y + max * rect.size.y);
 		}
 
 		Vector<Color> color;
@@ -409,12 +439,12 @@ void AnimationTrackEditSpriteFrame::draw_key(int p_index, float p_pixels_sec, in
 		return;
 	}
 
-	int frame = get_animation()->track_get_key_value(get_track(), p_index);
-
 	Ref<Texture> texture;
 	Rect2 region;
 
 	if (Object::cast_to<Sprite>(object) || Object::cast_to<Sprite3D>(object)) {
+
+		int frame = get_animation()->track_get_key_value(get_track(), p_index);
 
 		texture = object->call("get_texture");
 		if (!texture.is_valid()) {
@@ -883,8 +913,8 @@ void AnimationTrackEditTypeAudio::draw_key(int p_index, float p_pixels_sec, int 
 		float min = preview->get_min(ofs, ofs_n) * 0.5 + 0.5;
 
 		int idx = i - from_x;
-		lines[idx * 2 + 0] = Vector2(i, rect.position.y + min * rect.size.y);
-		lines[idx * 2 + 1] = Vector2(i, rect.position.y + max * rect.size.y);
+		lines.write[idx * 2 + 0] = Vector2(i, rect.position.y + min * rect.size.y);
+		lines.write[idx * 2 + 1] = Vector2(i, rect.position.y + max * rect.size.y);
 	}
 
 	Vector<Color> color;
@@ -974,14 +1004,10 @@ void AnimationTrackEditTypeAudio::drop_data(const Point2 &p_point, const Variant
 				ofs += 0.001;
 			}
 
-			print_line("inserting");
-
-			*get_block_animation_update_ptr() = true;
-			get_undo_redo()->create_action("Add Audio Track Clip");
+			get_undo_redo()->create_action(TTR("Add Audio Track Clip"));
 			get_undo_redo()->add_do_method(get_animation().ptr(), "audio_track_insert_key", get_track(), ofs, stream);
 			get_undo_redo()->add_undo_method(get_animation().ptr(), "track_remove_key_at_position", get_track(), ofs);
 			get_undo_redo()->commit_action();
-			*get_block_animation_update_ptr() = false;
 
 			update();
 			return;
@@ -1070,21 +1096,17 @@ void AnimationTrackEditTypeAudio::_gui_input(const Ref<InputEvent> &p_event) {
 		float ofs_local = -len_resizing_rel / get_timeline()->get_zoom_scale();
 		if (len_resizing_start) {
 			float prev_ofs = get_animation()->audio_track_get_key_start_offset(get_track(), len_resizing_index);
-			*get_block_animation_update_ptr() = true;
-			get_undo_redo()->create_action("Change Audio Track Clip Start Offset");
+			get_undo_redo()->create_action(TTR("Change Audio Track Clip Start Offset"));
 			get_undo_redo()->add_do_method(get_animation().ptr(), "audio_track_set_key_start_offset", get_track(), len_resizing_index, prev_ofs + ofs_local);
 			get_undo_redo()->add_undo_method(get_animation().ptr(), "audio_track_set_key_start_offset", get_track(), len_resizing_index, prev_ofs);
 			get_undo_redo()->commit_action();
-			*get_block_animation_update_ptr() = false;
 
 		} else {
 			float prev_ofs = get_animation()->audio_track_get_key_end_offset(get_track(), len_resizing_index);
-			*get_block_animation_update_ptr() = true;
-			get_undo_redo()->create_action("Change Audio Track Clip End Offset");
+			get_undo_redo()->create_action(TTR("Change Audio Track Clip End Offset"));
 			get_undo_redo()->add_do_method(get_animation().ptr(), "audio_track_set_key_end_offset", get_track(), len_resizing_index, prev_ofs + ofs_local);
 			get_undo_redo()->add_undo_method(get_animation().ptr(), "audio_track_set_key_end_offset", get_track(), len_resizing_index, prev_ofs);
 			get_undo_redo()->commit_action();
-			*get_block_animation_update_ptr() = false;
 		}
 
 		len_resizing = false;
@@ -1124,7 +1146,6 @@ Rect2 AnimationTrackEditTypeAnimation::get_key_rect(int p_index, float p_pixels_
 	}
 
 	String anim = get_animation()->animation_track_get_key_animation(get_track(), p_index);
-	print_line("anim " + anim + " has " + itos(ap->has_animation(anim)));
 
 	if (anim != "[stop]" && ap->has_animation(anim)) {
 

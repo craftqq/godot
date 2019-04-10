@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -30,14 +30,14 @@
 
 #include "export_template_manager.h"
 
+#include "core/io/json.h"
+#include "core/io/zip_io.h"
+#include "core/os/dir_access.h"
 #include "core/os/input.h"
 #include "core/os/keyboard.h"
+#include "core/version.h"
 #include "editor_node.h"
 #include "editor_scale.h"
-#include "io/json.h"
-#include "io/zip_io.h"
-#include "os/dir_access.h"
-#include "version.h"
 
 void ExportTemplateManager::_update_template_list() {
 
@@ -123,7 +123,6 @@ void ExportTemplateManager::_update_template_list() {
 
 void ExportTemplateManager::_download_template(const String &p_version) {
 
-	print_line("download " + p_version);
 	while (template_list->get_child_count()) {
 		memdelete(template_list->get_child(0));
 	}
@@ -179,7 +178,7 @@ void ExportTemplateManager::_uninstall_template_confirm() {
 	_update_template_list();
 }
 
-void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_progress) {
+bool ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_progress) {
 
 	FileAccess *fa = NULL;
 	zlib_filefunc_def io = zipio_create_io_from_file(&fa);
@@ -188,12 +187,13 @@ void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_
 	if (!pkg) {
 
 		EditorNode::get_singleton()->show_warning(TTR("Can't open export templates zip."));
-		return;
+		return false;
 	}
 	int ret = unzGoToFirstFile(pkg);
 
 	int fc = 0; //count them and find version
 	String version;
+	String contents_dir;
 
 	while (ret == UNZ_OK) {
 
@@ -222,20 +222,24 @@ void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_
 			if (data_str.get_slice_count(".") < 3) {
 				EditorNode::get_singleton()->show_warning(vformat(TTR("Invalid version.txt format inside templates: %s."), data_str));
 				unzClose(pkg);
-				return;
+				return false;
 			}
 
 			version = data_str;
+			contents_dir = file.get_base_dir().trim_suffix("/").trim_suffix("\\");
 		}
 
-		fc++;
+		if (file.get_file().size() != 0) {
+			fc++;
+		}
+
 		ret = unzGoToNextFile(pkg);
 	}
 
 	if (version == String()) {
 		EditorNode::get_singleton()->show_warning(TTR("No version.txt found inside templates."));
 		unzClose(pkg);
-		return;
+		return false;
 	}
 
 	String template_path = EditorSettings::get_singleton()->get_templates_dir().plus_file(version);
@@ -245,7 +249,7 @@ void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_
 	if (err != OK) {
 		EditorNode::get_singleton()->show_warning(TTR("Error creating path for templates:") + "\n" + template_path);
 		unzClose(pkg);
-		return;
+		return false;
 	}
 
 	memdelete(d);
@@ -266,7 +270,14 @@ void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_
 		char fname[16384];
 		unzGetCurrentFileInfo(pkg, &info, fname, 16384, NULL, 0, NULL, 0);
 
-		String file = String(fname).get_file();
+		String file_path(String(fname).simplify_path());
+
+		String file = file_path.get_file();
+
+		if (file.size() == 0) {
+			ret = unzGoToNextFile(pkg);
+			continue;
+		}
 
 		Vector<uint8_t> data;
 		data.resize(info.uncompressed_size);
@@ -275,6 +286,23 @@ void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_
 		unzOpenCurrentFile(pkg);
 		unzReadCurrentFile(pkg, data.ptrw(), data.size());
 		unzCloseCurrentFile(pkg);
+
+		String base_dir = file_path.get_base_dir().trim_suffix("/");
+
+		if (base_dir != contents_dir && base_dir.begins_with(contents_dir)) {
+			base_dir = base_dir.substr(contents_dir.length(), file_path.length()).trim_prefix("/");
+			file = base_dir.plus_file(file);
+
+			DirAccessRef da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+			ERR_CONTINUE(!da);
+
+			String output_dir = template_path.plus_file(base_dir);
+
+			if (!DirAccess::exists(output_dir)) {
+				Error mkdir_err = da->make_dir_recursive(output_dir);
+				ERR_CONTINUE(mkdir_err != OK);
+			}
+		}
 
 		if (p) {
 			p->step(TTR("Importing:") + " " + file, fc);
@@ -303,6 +331,8 @@ void ExportTemplateManager::_install_from_file(const String &p_file, bool p_use_
 	unzClose(pkg);
 
 	_update_template_list();
+
+	return true;
 }
 
 void ExportTemplateManager::popup_manager() {
@@ -344,7 +374,6 @@ void ExportTemplateManager::_http_download_mirror_completed(int p_status, int p_
 	bool mirrors_found = false;
 
 	Dictionary d = r;
-	print_line(r);
 	if (d.has("mirrors")) {
 		Array mirrors = d["mirrors"];
 		for (int i = 0; i < mirrors.size(); i++) {
@@ -395,7 +424,15 @@ void ExportTemplateManager::_http_download_templates_completed(int p_status, int
 				String path = download_templates->get_download_file();
 				template_list_state->set_text(TTR("Download Complete."));
 				template_downloader->hide();
-				_install_from_file(path, false);
+				int ret = _install_from_file(path, false);
+				if (ret) {
+					Error err = OS::get_singleton()->move_to_trash(path);
+					if (err != OK) {
+						EditorNode::get_singleton()->add_io_error(TTR("Cannot remove:") + "\n" + path + "\n");
+					}
+				} else {
+					WARN_PRINTS(vformat(TTR("Templates installation failed. The problematic templates archives can be found at '%s'."), path));
+				}
 			}
 		} break;
 	}
@@ -499,7 +536,6 @@ void ExportTemplateManager::_notification(int p_what) {
 
 	if (p_what == NOTIFICATION_VISIBILITY_CHANGED) {
 		if (!is_visible_in_tree()) {
-			print_line("closed");
 			set_process(false);
 		}
 	}

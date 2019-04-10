@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -35,7 +35,8 @@
 #ifndef CONNECTIONS_DIALOG_H
 #define CONNECTIONS_DIALOG_H
 
-#include "editor/property_editor.h"
+#include "core/undo_redo.h"
+#include "editor/editor_inspector.h"
 #include "editor/scene_tree_editor.h"
 #include "scene/gui/button.h"
 #include "scene/gui/check_button.h"
@@ -44,7 +45,6 @@
 #include "scene/gui/menu_button.h"
 #include "scene/gui/popup.h"
 #include "scene/gui/tree.h"
-#include "undo_redo.h"
 
 class PopupMenu;
 class ConnectDialogBinds;
@@ -62,7 +62,7 @@ class ConnectDialog : public ConfirmationDialog {
 
 	SceneTreeEditor *tree;
 	ConfirmationDialog *error;
-	PropertyEditor *bind_editor;
+	EditorInspector *bind_editor;
 	OptionButton *type_list;
 	CheckButton *deferred;
 	CheckButton *oneshot;

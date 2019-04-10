@@ -1,6 +1,5 @@
 import methods
 import os
-import string
 import sys
 
 
@@ -17,7 +16,7 @@ def can_build():
         # building natively on windows!
         if (os.getenv("VSINSTALLDIR")):
 
-            if (os.getenv("ANGLE_SRC_PATH") == None):
+            if (os.getenv("ANGLE_SRC_PATH") is None):
                 return False
 
             return True
@@ -25,11 +24,8 @@ def can_build():
 
 
 def get_opts():
-    from SCons.Variables import BoolVariable
-
     return [
         ('msvc_version', 'MSVC version to use (ignored if the VCINSTALLDIR environment variable is set)', None),
-        BoolVariable('use_mingw', 'Use the MinGW compiler even if MSVC is installed (only used on Windows)', False),
     ]
 
 

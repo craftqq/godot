@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -31,14 +31,15 @@
 #ifndef GEOMETRY_H
 #define GEOMETRY_H
 
-#include "dvector.h"
-#include "face3.h"
-#include "math_2d.h"
-#include "object.h"
-#include "print_string.h"
-#include "triangulate.h"
-#include "vector.h"
-#include "vector3.h"
+#include "core/math/face3.h"
+#include "core/math/rect2.h"
+#include "core/math/triangulate.h"
+#include "core/math/vector3.h"
+#include "core/object.h"
+#include "core/pool_vector.h"
+#include "core/print_string.h"
+#include "core/vector.h"
+
 /**
 	@author Juan Linietsky <reduzio@gmail.com>
 */
@@ -513,7 +514,7 @@ public:
 		return (cn.cross(an) > 0) == orientation;
 	}
 
-	static bool is_point_in_polygon(const Vector2 &p_point, const Vector<Vector2> &p_polygon);
+	//static bool is_point_in_polygon(const Vector2 &p_point, const Vector<Vector2> &p_polygon);
 
 	static Vector2 get_closest_point_to_segment_uncapped_2d(const Vector2 &p_point, const Vector2 *p_segment) {
 
@@ -701,9 +702,11 @@ public:
 		/* if we can assume that the line segment starts outside the circle (e.g. for continuous time collision detection) then the following can be skipped and we can just return the equivalent of res1 */
 		sqrtterm = Math::sqrt(sqrtterm);
 		real_t res1 = (-b - sqrtterm) / (2 * a);
-		//real_t res2 = ( -b + sqrtterm ) / (2 * a);
+		real_t res2 = (-b + sqrtterm) / (2 * a);
 
-		return (res1 >= 0 && res1 <= 1) ? res1 : -1;
+		if (res1 >= 0 && res1 <= 1) return res1;
+		if (res2 >= 0 && res2 <= 1) return res2;
+		return -1;
 	}
 
 	static inline Vector<Vector3> clip_polygon(const Vector<Vector3> &polygon, const Plane &p_plane) {
@@ -799,6 +802,51 @@ public:
 		return Vector<Vector<Vector2> >();
 	}
 
+	static bool is_polygon_clockwise(const Vector<Vector2> &p_polygon) {
+		int c = p_polygon.size();
+		if (c < 3)
+			return false;
+		const Vector2 *p = p_polygon.ptr();
+		real_t sum = 0;
+		for (int i = 0; i < c; i++) {
+			const Vector2 &v1 = p[i];
+			const Vector2 &v2 = p[(i + 1) % c];
+			sum += (v2.x - v1.x) * (v2.y + v1.y);
+		}
+
+		return sum > 0.0f;
+	}
+
+	/* alternate implementation that should be faster */
+	static bool is_point_in_polygon(const Vector2 &p_point, const Vector<Vector2> &p_polygon) {
+		int c = p_polygon.size();
+		if (c < 3)
+			return false;
+		const Vector2 *p = p_polygon.ptr();
+		Vector2 further_away(-1e20, -1e20);
+		Vector2 further_away_opposite(1e20, 1e20);
+
+		for (int i = 0; i < c; i++) {
+			further_away.x = MAX(p[i].x, further_away.x);
+			further_away.y = MAX(p[i].y, further_away.y);
+			further_away_opposite.x = MIN(p[i].x, further_away_opposite.x);
+			further_away_opposite.y = MIN(p[i].y, further_away_opposite.y);
+		}
+
+		further_away += (further_away - further_away_opposite) * Vector2(1.221313, 1.512312); // make point outside that wont intersect with points in segment from p_point
+
+		int intersections = 0;
+		for (int i = 0; i < c; i++) {
+			const Vector2 &v1 = p[i];
+			const Vector2 &v2 = p[(i + 1) % c];
+			if (segment_intersects_segment_2d(v1, v2, p_point, further_away, NULL)) {
+				intersections++;
+			}
+		}
+
+		return (intersections & 1);
+	}
+
 	static PoolVector<PoolVector<Face3> > separate_objects(PoolVector<Face3> p_array);
 
 	static PoolVector<Face3> wrap_geometry(PoolVector<Face3> p_array, real_t *p_error = NULL); ///< create a "wrap" that encloses the given geometry
@@ -890,19 +938,21 @@ public:
 		for (int i = 0; i < n; ++i) {
 			while (k >= 2 && vec2_cross(H[k - 2], H[k - 1], P[i]) <= 0)
 				k--;
-			H[k++] = P[i];
+			H.write[k++] = P[i];
 		}
 
 		// Build upper hull
 		for (int i = n - 2, t = k + 1; i >= 0; i--) {
 			while (k >= t && vec2_cross(H[k - 2], H[k - 1], P[i]) <= 0)
 				k--;
-			H[k++] = P[i];
+			H.write[k++] = P[i];
 		}
 
 		H.resize(k);
 		return H;
 	}
+
+	static Vector<Vector<Vector2> > decompose_polygon_in_convex(Vector<Point2> polygon);
 
 	static MeshData build_convex_mesh(const PoolVector<Plane> &p_planes);
 	static PoolVector<Plane> build_sphere_planes(real_t p_radius, int p_lats, int p_lons, Vector3::Axis p_axis = Vector3::AXIS_Z);

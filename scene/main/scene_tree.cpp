@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -30,16 +30,16 @@
 
 #include "scene_tree.h"
 
+#include "core/io/marshalls.h"
+#include "core/io/resource_loader.h"
+#include "core/message_queue.h"
+#include "core/os/keyboard.h"
+#include "core/os/os.h"
+#include "core/print_string.h"
+#include "core/project_settings.h"
 #include "editor/editor_node.h"
-#include "io/marshalls.h"
-#include "io/resource_loader.h"
 #include "main/input_default.h"
-#include "message_queue.h"
 #include "node.h"
-#include "os/keyboard.h"
-#include "os/os.h"
-#include "print_string.h"
-#include "project_settings.h"
 #include "scene/resources/dynamic_font.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -132,6 +132,12 @@ void SceneTree::remove_from_group(const StringName &p_group, Node *p_node) {
 		group_map.erase(E);
 }
 
+void SceneTree::make_group_changed(const StringName &p_group) {
+	Map<StringName, Group>::Element *E = group_map.find(p_group);
+	if (E)
+		E->get().changed = true;
+}
+
 void SceneTree::flush_transform_notifications() {
 
 	SelfList<Node> *n = xform_change_list.first();
@@ -165,18 +171,23 @@ void SceneTree::_flush_ugc() {
 	ugc_locked = false;
 }
 
-void SceneTree::_update_group_order(Group &g) {
+void SceneTree::_update_group_order(Group &g, bool p_use_priority) {
 
 	if (!g.changed)
 		return;
 	if (g.nodes.empty())
 		return;
 
-	Node **nodes = &g.nodes[0];
+	Node **nodes = g.nodes.ptrw();
 	int node_count = g.nodes.size();
 
-	SortArray<Node *, Node::Comparator> node_sort;
-	node_sort.sort(nodes, node_count);
+	if (p_use_priority) {
+		SortArray<Node *, Node::ComparatorWithPriority> node_sort;
+		node_sort.sort(nodes, node_count);
+	} else {
+		SortArray<Node *, Node::Comparator> node_sort;
+		node_sort.sort(nodes, node_count);
+	}
 	g.changed = false;
 }
 
@@ -216,7 +227,7 @@ void SceneTree::call_group_flags(uint32_t p_call_flags, const StringName &p_grou
 	_update_group_order(g);
 
 	Vector<Node *> nodes_copy = g.nodes;
-	Node **nodes = &nodes_copy[0];
+	Node **nodes = nodes_copy.ptrw();
 	int node_count = nodes_copy.size();
 
 	call_lock++;
@@ -271,7 +282,7 @@ void SceneTree::notify_group_flags(uint32_t p_call_flags, const StringName &p_gr
 	_update_group_order(g);
 
 	Vector<Node *> nodes_copy = g.nodes;
-	Node **nodes = &nodes_copy[0];
+	Node **nodes = nodes_copy.ptrw();
 	int node_count = nodes_copy.size();
 
 	call_lock++;
@@ -320,7 +331,7 @@ void SceneTree::set_group_flags(uint32_t p_call_flags, const StringName &p_group
 	_update_group_order(g);
 
 	Vector<Node *> nodes_copy = g.nodes;
-	Node **nodes = &nodes_copy[0];
+	Node **nodes = nodes_copy.ptrw();
 	int node_count = nodes_copy.size();
 
 	call_lock++;
@@ -473,6 +484,14 @@ bool SceneTree::iteration(float p_time) {
 	return _quit;
 }
 
+void SceneTree::_update_font_oversampling(float p_ratio) {
+
+	if (use_font_oversampling) {
+		DynamicFontAtSize::font_oversampling = p_ratio;
+		DynamicFont::update_oversampling();
+	}
+}
+
 bool SceneTree::idle(float p_time) {
 
 	//print_line("ram: "+itos(OS::get_singleton()->get_static_memory_usage())+" sram: "+itos(OS::get_singleton()->get_dynamic_memory_usage()));
@@ -504,12 +523,6 @@ bool SceneTree::idle(float p_time) {
 
 		last_screen_size = win_size;
 		_update_root_rect();
-
-		if (use_font_oversampling) {
-			DynamicFontAtSize::font_oversampling = OS::get_singleton()->get_window_size().width / root->get_visible_rect().size.width;
-			DynamicFont::update_oversampling();
-		}
-
 		emit_signal("screen_resized");
 	}
 
@@ -524,10 +537,15 @@ bool SceneTree::idle(float p_time) {
 
 	//go through timers
 
+	List<Ref<SceneTreeTimer> >::Element *L = timers.back(); //last element
+
 	for (List<Ref<SceneTreeTimer> >::Element *E = timers.front(); E;) {
 
 		List<Ref<SceneTreeTimer> >::Element *N = E->next();
 		if (pause && !E->get()->is_pause_mode_process()) {
+			if (E == L) {
+				break; //break on last, so if new timers were added during list traversal, ignore them.
+			}
 			E = N;
 			continue;
 		}
@@ -538,6 +556,9 @@ bool SceneTree::idle(float p_time) {
 		if (time_left < 0) {
 			E->get()->emit_signal("timeout");
 			timers.erase(E);
+		}
+		if (E == L) {
+			break; //break on last, so if new timers were added during list traversal, ignore them.
 		}
 		E = N;
 	}
@@ -587,6 +608,7 @@ void SceneTree::finish() {
 
 	if (root) {
 		root->_set_tree(NULL);
+		root->_propagate_after_exit_tree();
 		memdelete(root); //delete root
 	}
 }
@@ -619,6 +641,7 @@ void SceneTree::_notification(int p_notification) {
 			}
 		} break;
 		case NOTIFICATION_OS_MEMORY_WARNING:
+		case NOTIFICATION_OS_IME_UPDATE:
 		case NOTIFICATION_WM_MOUSE_ENTER:
 		case NOTIFICATION_WM_MOUSE_EXIT:
 		case NOTIFICATION_WM_FOCUS_IN:
@@ -635,12 +658,14 @@ void SceneTree::_notification(int p_notification) {
 		} break;
 		case NOTIFICATION_TRANSLATION_CHANGED: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
-				get_root()->propagate_notification(Node::NOTIFICATION_TRANSLATION_CHANGED);
+				get_root()->propagate_notification(p_notification);
 			}
 		} break;
 		case NOTIFICATION_WM_UNFOCUS_REQUEST: {
 
 			notify_group_flags(GROUP_CALL_REALTIME | GROUP_CALL_MULTILEVEL, "input", NOTIFICATION_WM_UNFOCUS_REQUEST);
+
+			get_root()->propagate_notification(p_notification);
 
 		} break;
 
@@ -884,7 +909,7 @@ void SceneTree::_call_input_pause(const StringName &p_group, const StringName &p
 	Vector<Node *> nodes_copy = g.nodes;
 
 	int node_count = nodes_copy.size();
-	Node **nodes = &nodes_copy[0];
+	Node **nodes = nodes_copy.ptrw();
 
 	Variant arg = p_input;
 	const Variant *v[1] = { &arg };
@@ -921,14 +946,14 @@ void SceneTree::_notify_group_pause(const StringName &p_group, int p_notificatio
 	if (g.nodes.empty())
 		return;
 
-	_update_group_order(g);
+	_update_group_order(g, p_notification == Node::NOTIFICATION_PROCESS || p_notification == Node::NOTIFICATION_INTERNAL_PROCESS || p_notification == Node::NOTIFICATION_PHYSICS_PROCESS || p_notification == Node::NOTIFICATION_INTERNAL_PHYSICS_PROCESS);
 
 	//copy, so copy on write happens in case something is removed from process while being called
 	//performance is not lost because only if something is added/removed the vector is copied.
 	Vector<Node *> nodes_copy = g.nodes;
 
 	int node_count = nodes_copy.size();
-	Node **nodes = &nodes_copy[0];
+	Node **nodes = nodes_copy.ptrw();
 
 	call_lock++;
 
@@ -939,6 +964,8 @@ void SceneTree::_notify_group_pause(const StringName &p_group, int p_notificatio
 			continue;
 
 		if (!n->can_process())
+			continue;
+		if (!n->can_process_notification(p_notification))
 			continue;
 
 		n->notification(p_notification);
@@ -1110,10 +1137,12 @@ void SceneTree::_update_root_rect() {
 
 	if (stretch_mode == STRETCH_MODE_DISABLED) {
 
+		_update_font_oversampling(1.0);
 		root->set_size((last_screen_size / stretch_shrink).floor());
 		root->set_attach_to_screen_rect(Rect2(Point2(), last_screen_size));
 		root->set_size_override_stretch(false);
 		root->set_size_override(false, Size2());
+		root->update_canvas_items();
 		return; //user will take care
 	}
 
@@ -1126,6 +1155,10 @@ void SceneTree::_update_root_rect() {
 
 	float viewport_aspect = desired_res.aspect();
 	float video_mode_aspect = video_mode.aspect();
+
+	if (use_font_oversampling && stretch_aspect == STRETCH_ASPECT_IGNORE) {
+		WARN_PRINT("Font oversampling only works with the resize modes 'Keep Width', 'Keep Height', and 'Expand'.");
+	}
 
 	if (stretch_aspect == STRETCH_ASPECT_IGNORE || ABS(viewport_aspect - video_mode_aspect) < CMP_EPSILON) {
 		//same aspect or ignore aspect
@@ -1182,23 +1215,33 @@ void SceneTree::_update_root_rect() {
 		VisualServer::get_singleton()->black_bars_set_margins(0, 0, 0, 0);
 	}
 
-	//print_line("VP SIZE: "+viewport_size+" OFFSET: "+offset+" = "+(offset*2+viewport_size));
-	//print_line("SS: "+video_mode);
 	switch (stretch_mode) {
+		case STRETCH_MODE_DISABLED: {
+			// Already handled above
+			_update_font_oversampling(1.0);
+		} break;
 		case STRETCH_MODE_2D: {
 
+			_update_font_oversampling(screen_size.x / viewport_size.x); //screen / viewport radio drives oversampling
 			root->set_size((screen_size / stretch_shrink).floor());
 			root->set_attach_to_screen_rect(Rect2(margin, screen_size));
 			root->set_size_override_stretch(true);
 			root->set_size_override(true, (viewport_size / stretch_shrink).floor());
+			root->update_canvas_items(); //force them to update just in case
 
 		} break;
 		case STRETCH_MODE_VIEWPORT: {
 
+			_update_font_oversampling(1.0);
 			root->set_size((viewport_size / stretch_shrink).floor());
 			root->set_attach_to_screen_rect(Rect2(margin, screen_size));
 			root->set_size_override_stretch(false);
 			root->set_size_override(false, Size2());
+			root->update_canvas_items(); //force them to update just in case
+
+			if (use_font_oversampling) {
+				WARN_PRINT("Font oversampling does not work in 'Viewport' stretch mode, only '2D'.")
+			}
 
 		} break;
 	}
@@ -1590,7 +1633,7 @@ void SceneTree::_live_edit_duplicate_node_func(const NodePath &p_at, const Strin
 			continue;
 		Node *n2 = n->get_node(p_at);
 
-		Node *dup = n2->duplicate(true);
+		Node *dup = n2->duplicate(Node::DUPLICATE_SIGNALS | Node::DUPLICATE_GROUPS | Node::DUPLICATE_SCRIPTS);
 
 		if (!dup)
 			continue;
@@ -1851,10 +1894,10 @@ void SceneTree::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "multiplayer_poll"), "set_multiplayer_poll_enabled", "is_multiplayer_poll_enabled");
 
 	ADD_SIGNAL(MethodInfo("tree_changed"));
-	ADD_SIGNAL(MethodInfo("node_added", PropertyInfo(Variant::OBJECT, "node")));
-	ADD_SIGNAL(MethodInfo("node_removed", PropertyInfo(Variant::OBJECT, "node")));
+	ADD_SIGNAL(MethodInfo("node_added", PropertyInfo(Variant::OBJECT, "node", PROPERTY_HINT_RESOURCE_TYPE, "Node")));
+	ADD_SIGNAL(MethodInfo("node_removed", PropertyInfo(Variant::OBJECT, "node", PROPERTY_HINT_RESOURCE_TYPE, "Node")));
 	ADD_SIGNAL(MethodInfo("screen_resized"));
-	ADD_SIGNAL(MethodInfo("node_configuration_warning_changed", PropertyInfo(Variant::OBJECT, "node")));
+	ADD_SIGNAL(MethodInfo("node_configuration_warning_changed", PropertyInfo(Variant::OBJECT, "node", PROPERTY_HINT_RESOURCE_TYPE, "Node")));
 
 	ADD_SIGNAL(MethodInfo("idle_frame"));
 	ADD_SIGNAL(MethodInfo("physics_frame"));
@@ -1901,12 +1944,11 @@ void SceneTree::add_idle_callback(IdleCallback p_callback) {
 
 void SceneTree::set_use_font_oversampling(bool p_oversampling) {
 
+	if (use_font_oversampling == p_oversampling)
+		return;
+
 	use_font_oversampling = p_oversampling;
-	if (use_font_oversampling) {
-		DynamicFontAtSize::font_oversampling = OS::get_singleton()->get_window_size().width / root->get_visible_rect().size.width;
-	} else {
-		DynamicFontAtSize::font_oversampling = 1.0;
-	}
+	_update_root_rect();
 }
 
 bool SceneTree::is_using_font_oversampling() const {
@@ -1920,6 +1962,7 @@ SceneTree::SceneTree() {
 	accept_quit = true;
 	quit_on_go_back = true;
 	initialized = false;
+	use_font_oversampling = false;
 #ifdef DEBUG_ENABLED
 	debug_collisions_hint = false;
 	debug_navigation_hint = false;
@@ -1929,6 +1972,7 @@ SceneTree::SceneTree() {
 	debug_navigation_color = GLOBAL_DEF("debug/shapes/navigation/geometry_color", Color(0.1, 1.0, 0.7, 0.4));
 	debug_navigation_disabled_color = GLOBAL_DEF("debug/shapes/navigation/disabled_geometry_color", Color(1.0, 0.7, 0.1, 0.4));
 	collision_debug_contacts = GLOBAL_DEF("debug/shapes/collision/max_contacts_displayed", 10000);
+	ProjectSettings::get_singleton()->set_custom_property_info("debug/shapes/collision/max_contacts_displayed", PropertyInfo(Variant::INT, "debug/shapes/collision/max_contacts_displayed", PROPERTY_HINT_RANGE, "0,20000,1")); // No negative
 
 	tree_version = 1;
 	physics_process_time = 1;
@@ -1949,6 +1993,7 @@ SceneTree::SceneTree() {
 
 	root = memnew(Viewport);
 	root->set_name("root");
+	root->set_handle_input_locally(false);
 	if (!root->get_world().is_valid())
 		root->set_world(Ref<World>(memnew(World)));
 
@@ -1962,7 +2007,9 @@ SceneTree::SceneTree() {
 	current_scene = NULL;
 
 	int ref_atlas_size = GLOBAL_DEF("rendering/quality/reflections/atlas_size", 2048);
+	ProjectSettings::get_singleton()->set_custom_property_info("rendering/quality/reflections/atlas_size", PropertyInfo(Variant::INT, "rendering/quality/reflections/atlas_size", PROPERTY_HINT_RANGE, "0,8192,or_greater")); //next_power_of_2 will return a 0 as min value
 	int ref_atlas_subdiv = GLOBAL_DEF("rendering/quality/reflections/atlas_subdiv", 8);
+	ProjectSettings::get_singleton()->set_custom_property_info("rendering/quality/reflections/atlas_subdiv", PropertyInfo(Variant::INT, "rendering/quality/reflections/atlas_subdiv", PROPERTY_HINT_RANGE, "0,32,or_greater")); //next_power_of_2 will return a 0 as min value
 	int msaa_mode = GLOBAL_DEF("rendering/quality/filters/msaa", 0);
 	ProjectSettings::get_singleton()->set_custom_property_info("rendering/quality/filters/msaa", PropertyInfo(Variant::INT, "rendering/quality/filters/msaa", PROPERTY_HINT_ENUM, "Disabled,2x,4x,8x,16x"));
 	root->set_msaa(Viewport::MSAA(msaa_mode));
@@ -2051,8 +2098,6 @@ SceneTree::SceneTree() {
 	live_edit_root = NodePath("/root");
 
 #endif
-
-	use_font_oversampling = false;
 }
 
 SceneTree::~SceneTree() {

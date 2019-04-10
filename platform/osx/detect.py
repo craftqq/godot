@@ -1,5 +1,6 @@
 import os
 import sys
+from methods import detect_darwin_sdk_path
 
 
 def is_active():
@@ -23,6 +24,7 @@ def get_opts():
 
     return [
         ('osxcross_sdk', 'OSXCross SDK version', 'darwin14'),
+        ('MACOS_SDK_PATH', 'Path to the macOS SDK', ''),
         EnumVariable('debug_symbols', 'Add debugging symbols to release builds', 'yes', ('yes', 'no', 'full')),
         BoolVariable('separate_debug_symbols', 'Create a separate file containing debugging symbols', False),
     ]
@@ -39,14 +41,21 @@ def configure(env):
 	## Build type
 
     if (env["target"] == "release"):
-        env.Prepend(CCFLAGS=['-O3', '-ffast-math', '-fomit-frame-pointer', '-ftree-vectorize', '-msse2'])
+        if (env["optimize"] == "speed"): #optimize for speed (default)
+            env.Prepend(CCFLAGS=['-O3', '-fomit-frame-pointer', '-ftree-vectorize', '-msse2'])
+        else: #optimize for size
+            env.Prepend(CCFLAGS=['-Os','-ftree-vectorize', '-msse2'])
+
         if (env["debug_symbols"] == "yes"):
             env.Prepend(CCFLAGS=['-g1'])
         if (env["debug_symbols"] == "full"):
             env.Prepend(CCFLAGS=['-g2'])
 
     elif (env["target"] == "release_debug"):
-        env.Prepend(CCFLAGS=['-O2', '-DDEBUG_ENABLED'])
+        if (env["optimize"] == "speed"): #optimize for speed (default)
+            env.Prepend(CCFLAGS=['-O2', '-DDEBUG_ENABLED'])
+        else: #optimize for size
+            env.Prepend(CCFLAGS=['-Os', '-DDEBUG_ENABLED'])
         if (env["debug_symbols"] == "yes"):
             env.Prepend(CCFLAGS=['-g1'])
         if (env["debug_symbols"] == "full"):
@@ -63,7 +72,11 @@ def configure(env):
 
     ## Compiler configuration
 
-    if "OSXCROSS_ROOT" not in os.environ: # regular native build
+    # Save this in environment for use by other modules
+    if "OSXCROSS_ROOT" in os.environ:
+        env["osxcross"] = True
+
+    if not "osxcross" in env: # regular native build
         env.Append(CCFLAGS=['-arch', 'x86_64'])
         env.Append(LINKFLAGS=['-arch', 'x86_64'])
         if (env["macports_clang"] != 'no'):
@@ -77,12 +90,16 @@ def configure(env):
             env['AS'] = mpprefix + "/libexec/llvm-" + mpclangver + "/bin/llvm-as"
             env.Append(CCFLAGS=['-D__MACPORTS__']) #hack to fix libvpx MM256_BROADCASTSI128_SI256 define
 
+        detect_darwin_sdk_path('osx', env)
+        env.Append(CPPFLAGS=['-isysroot', '$MACOS_SDK_PATH'])
+        env.Append(LINKFLAGS=['-isysroot', '$MACOS_SDK_PATH'])
+
     else: # osxcross build
         root = os.environ.get("OSXCROSS_ROOT", 0)
         basecmd = root + "/target/bin/x86_64-apple-" + env["osxcross_sdk"] + "-"
 
         ccache_path = os.environ.get("CCACHE")
-        if ccache_path == None:
+        if ccache_path is None:
             env['CC'] = basecmd + "cc"
             env['CXX'] = basecmd + "c++"
         else:
@@ -108,8 +125,8 @@ def configure(env):
     ## Flags
 
     env.Append(CPPPATH=['#platform/osx'])
-    env.Append(CPPFLAGS=['-DOSX_ENABLED', '-DUNIX_ENABLED', '-DGLES_ENABLED', '-DAPPLE_STYLE_KEYS', '-DCOREAUDIO_ENABLED'])
-    env.Append(LINKFLAGS=['-framework', 'Cocoa', '-framework', 'Carbon', '-framework', 'OpenGL', '-framework', 'AGL', '-framework', 'AudioUnit', '-framework', 'CoreAudio', '-lz', '-framework', 'IOKit', '-framework', 'ForceFeedback'])
+    env.Append(CPPFLAGS=['-DOSX_ENABLED', '-DUNIX_ENABLED', '-DGLES_ENABLED', '-DAPPLE_STYLE_KEYS', '-DCOREAUDIO_ENABLED', '-DCOREMIDI_ENABLED'])
+    env.Append(LINKFLAGS=['-framework', 'Cocoa', '-framework', 'Carbon', '-framework', 'OpenGL', '-framework', 'AGL', '-framework', 'AudioUnit', '-framework', 'CoreAudio', '-framework', 'CoreMIDI', '-lz', '-framework', 'IOKit', '-framework', 'ForceFeedback', '-framework', 'CoreVideo'])
     env.Append(LIBS=['pthread'])
 
     env.Append(CPPFLAGS=['-mmacosx-version-min=10.9'])

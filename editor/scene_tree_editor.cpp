@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -30,11 +30,11 @@
 
 #include "scene_tree_editor.h"
 
+#include "core/message_queue.h"
+#include "core/print_string.h"
 #include "editor/plugins/animation_player_editor_plugin.h"
 #include "editor/plugins/canvas_item_editor_plugin.h"
 #include "editor_node.h"
-#include "message_queue.h"
-#include "print_string.h"
 #include "scene/gui/label.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/packed_scene.h"
@@ -73,7 +73,7 @@ void SceneTreeEditor::_cell_button_pressed(Object *p_item, int p_column, int p_i
 		undo_redo->create_action(TTR("Toggle Visible"));
 		_toggle_visible(n);
 		List<Node *> selection = editor_selection->get_selected_node_list();
-		if (selection.size() > 1) {
+		if (selection.size() > 1 && selection.find(n) != NULL) {
 			for (List<Node *>::Element *E = selection.front(); E; E = E->next()) {
 				Node *nv = E->get();
 				ERR_FAIL_COND(!nv);
@@ -186,11 +186,7 @@ bool SceneTreeEditor::_add_nodes(Node *p_node, TreeItem *p_parent) {
 			item->set_collapsed(true);
 	}
 
-	Ref<Texture> icon;
-	if (p_node->has_meta("_editor_icon"))
-		icon = p_node->get_meta("_editor_icon");
-	else
-		icon = get_icon((has_icon(p_node->get_class(), "EditorIcons") ? p_node->get_class() : String("Object")), "EditorIcons");
+	Ref<Texture> icon = EditorNode::get_singleton()->get_object_icon(p_node, "Node");
 	item->set_icon(0, icon);
 	item->set_metadata(0, p_node->get_path());
 
@@ -248,7 +244,7 @@ bool SceneTreeEditor::_add_nodes(Node *p_node, TreeItem *p_parent) {
 		item->set_tooltip(0, String(p_node->get_name()) + "\n" + TTR("Type:") + " " + p_node->get_class());
 	}
 
-	if (can_open_instance) {
+	if (can_open_instance && undo_redo) { //Show buttons only when necessary(SceneTreeDock) to avoid crashes
 
 		if (!p_node->is_connected("script_changed", this, "_node_script_changed"))
 			p_node->connect("script_changed", this, "_node_script_changed", varray(p_node));
@@ -521,8 +517,10 @@ void SceneTreeEditor::_selected_changed() {
 void SceneTreeEditor::_deselect_items() {
 
 	// Clear currently elected items in scene tree dock.
-	if (editor_selection)
+	if (editor_selection) {
 		editor_selection->clear();
+		emit_signal("node_changed");
+	}
 }
 
 void SceneTreeEditor::_cell_multi_selected(Object *p_object, int p_cell, bool p_selected) {
@@ -546,36 +544,33 @@ void SceneTreeEditor::_cell_multi_selected(Object *p_object, int p_cell, bool p_
 	} else {
 		editor_selection->remove_node(n);
 	}
+	emit_signal("node_changed");
 }
 
 void SceneTreeEditor::_notification(int p_what) {
 
-	if (p_what == NOTIFICATION_ENTER_TREE) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
 
-		get_tree()->connect("tree_changed", this, "_tree_changed");
-		get_tree()->connect("node_removed", this, "_node_removed");
-		get_tree()->connect("node_configuration_warning_changed", this, "_warning_changed");
+			get_tree()->connect("tree_changed", this, "_tree_changed");
+			get_tree()->connect("node_removed", this, "_node_removed");
+			get_tree()->connect("node_configuration_warning_changed", this, "_warning_changed");
 
-		tree->connect("item_collapsed", this, "_cell_collapsed");
+			tree->connect("item_collapsed", this, "_cell_collapsed");
 
-		EditorSettings::get_singleton()->connect("settings_changed", this, "_editor_settings_changed");
-		_editor_settings_changed();
+			_update_tree();
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
 
-		//get_scene()->connect("tree_changed",this,"_tree_changed",Vector<Variant>(),CONNECT_DEFERRED);
-		//get_scene()->connect("node_removed",this,"_node_removed",Vector<Variant>(),CONNECT_DEFERRED);
-		_update_tree();
-	}
-	if (p_what == NOTIFICATION_EXIT_TREE) {
+			get_tree()->disconnect("tree_changed", this, "_tree_changed");
+			get_tree()->disconnect("node_removed", this, "_node_removed");
+			tree->disconnect("item_collapsed", this, "_cell_collapsed");
+			get_tree()->disconnect("node_configuration_warning_changed", this, "_warning_changed");
+		} break;
+		case NOTIFICATION_THEME_CHANGED: {
 
-		get_tree()->disconnect("tree_changed", this, "_tree_changed");
-		get_tree()->disconnect("node_removed", this, "_node_removed");
-		tree->disconnect("item_collapsed", this, "_cell_collapsed");
-		get_tree()->disconnect("node_configuration_warning_changed", this, "_warning_changed");
-		EditorSettings::get_singleton()->disconnect("settings_changed", this, "_editor_settings_changed");
-	}
-	if (p_what == NOTIFICATION_THEME_CHANGED) {
-
-		_update_tree();
+			_update_tree();
+		} break;
 	}
 }
 
@@ -666,11 +661,23 @@ void SceneTreeEditor::_renamed() {
 	Node *n = get_node(np);
 	ERR_FAIL_COND(!n);
 
+	// Empty node names are not allowed, so resets it to previous text and show warning
+	if (which->get_text(0).strip_edges().empty()) {
+		which->set_text(0, n->get_name());
+		EditorNode::get_singleton()->show_warning(TTR("No name provided."));
+		return;
+	}
+
 	String new_name = which->get_text(0);
 	if (!Node::_validate_node_name(new_name)) {
 
 		error->set_text(TTR("Invalid node name, the following characters are not allowed:") + "\n" + Node::invalid_character);
 		error->popup_centered_minsize();
+
+		if (new_name.empty()) {
+			which->set_text(0, n->get_name());
+			return;
+		}
 
 		which->set_text(0, new_name);
 	}
@@ -965,18 +972,6 @@ void SceneTreeEditor::_warning_changed(Node *p_for_node) {
 
 	//should use a timer
 	update_timer->start();
-	//print_line("WARNING CHANGED "+String(p_for_node->get_name()));
-}
-
-void SceneTreeEditor::_editor_settings_changed() {
-	bool enable_rl = EditorSettings::get_singleton()->get("docks/scene_tree/draw_relationship_lines");
-	Color rl_color = EditorSettings::get_singleton()->get("docks/scene_tree/relationship_line_color");
-
-	if (enable_rl) {
-		tree->add_constant_override("draw_relationship_lines", 1);
-		tree->add_color_override("relationship_line_color", rl_color);
-	} else
-		tree->add_constant_override("draw_relationship_lines", 0);
 }
 
 void SceneTreeEditor::_bind_methods() {
@@ -998,8 +993,6 @@ void SceneTreeEditor::_bind_methods() {
 
 	ClassDB::bind_method("_node_script_changed", &SceneTreeEditor::_node_script_changed);
 	ClassDB::bind_method("_node_visibility_changed", &SceneTreeEditor::_node_visibility_changed);
-
-	ClassDB::bind_method("_editor_settings_changed", &SceneTreeEditor::_editor_settings_changed);
 
 	ClassDB::bind_method(D_METHOD("get_drag_data_fw"), &SceneTreeEditor::get_drag_data_fw);
 	ClassDB::bind_method(D_METHOD("can_drop_data_fw"), &SceneTreeEditor::can_drop_data_fw);
@@ -1140,7 +1133,7 @@ SceneTreeDialog::SceneTreeDialog() {
 
 	set_title(TTR("Select a Node"));
 
-	tree = memnew(SceneTreeEditor(false, false));
+	tree = memnew(SceneTreeEditor(false, false, true));
 	add_child(tree);
 	//set_child_rect(tree);
 

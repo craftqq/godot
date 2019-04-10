@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="EditorProperty" inherits="Container" category="Core" version="3.1">
+<class name="EditorProperty" inherits="Container" category="Core" version="3.2">
 	<brief_description>
 	</brief_description>
 	<description>
@@ -9,6 +9,20 @@
 	<demos>
 	</demos>
 	<methods>
+		<method name="emit_changed">
+			<return type="void">
+			</return>
+			<argument index="0" name="property" type="String">
+			</argument>
+			<argument index="1" name="value" type="Variant">
+			</argument>
+			<argument index="2" name="field" type="String" default="&quot;&quot;">
+			</argument>
+			<argument index="3" name="changing" type="bool" default="false">
+			</argument>
+			<description>
+			</description>
+		</method>
 		<method name="get_edited_object">
 			<return type="Object">
 			</return>
@@ -16,6 +30,12 @@
 			</description>
 		</method>
 		<method name="get_edited_property">
+			<return type="String">
+			</return>
+			<description>
+			</description>
+		</method>
+		<method name="get_tooltip_text" qualifiers="const">
 			<return type="String">
 			</return>
 			<description>
@@ -92,7 +112,7 @@
 		<signal name="resource_selected">
 			<argument index="0" name="path" type="String">
 			</argument>
-			<argument index="1" name="resource" type="Object">
+			<argument index="1" name="resource" type="Resource">
 			</argument>
 			<description>
 			</description>

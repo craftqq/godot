@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -40,6 +40,8 @@ class VisualScriptFunction : public VisualScriptNode {
 	struct Argument {
 		String name;
 		Variant::Type type;
+		PropertyHint hint;
+		String hint_string;
 	};
 
 	Vector<Argument> arguments;
@@ -70,7 +72,7 @@ public:
 	virtual String get_text() const;
 	virtual String get_category() const { return "flow_control"; }
 
-	void add_argument(Variant::Type p_type, const String &p_name, int p_index = -1);
+	void add_argument(Variant::Type p_type, const String &p_name, int p_index = -1, const PropertyHint p_hint = PROPERTY_HINT_NONE, const String &p_hint_string = String(""));
 	void set_argument_type(int p_argidx, Variant::Type p_type);
 	Variant::Type get_argument_type(int p_argidx) const;
 	void set_argument_name(int p_argidx, const String &p_name);

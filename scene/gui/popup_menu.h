@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2019 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2019 Godot Engine contributors (cf. AUTHORS.md)    */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -101,6 +101,7 @@ class PopupMenu : public Popup {
 	bool hide_on_item_selection;
 	bool hide_on_checkable_item_selection;
 	bool hide_on_multistate_item_selection;
+	bool hide_on_window_lose_focus;
 	Vector2 moved;
 
 	Array _get_items() const;
@@ -180,7 +181,7 @@ public:
 
 	void remove_item(int p_idx);
 
-	void add_separator();
+	void add_separator(const String &p_text = String());
 
 	void clear();
 
@@ -202,7 +203,13 @@ public:
 	void set_hide_on_multistate_item_selection(bool p_enabled);
 	bool is_hide_on_multistate_item_selection() const;
 
+	void set_submenu_popup_delay(float p_time);
+	float get_submenu_popup_delay() const;
+
 	virtual void popup(const Rect2 &p_bounds = Rect2());
+
+	void set_hide_on_window_lose_focus(bool p_enabled);
+	bool is_hide_on_window_lose_focus() const;
 
 	PopupMenu();
 	~PopupMenu();
